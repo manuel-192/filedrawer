@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=File drawer
-Comment=
+Comment=Simple HTTP based file server for local networks
 Exec=filedrawer
 Icon=green-fileopen
 Path=
