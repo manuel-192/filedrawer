@@ -1,0 +1,191 @@
+#!/bin/bash
+#
+# filedrawer, a simple HTTP based file server with a (Yad based) GUI for local network.
+#
+# Requirements:
+###############
+#    - on Antergos, install programs: yad, ufw, gksu
+#    - python 3 (not that python2 is not supported although it should be trivial to add)
+#    - firewall supported: ufw
+#    - firewall port number $SRV_PORT (see below) is manipulated if ufw is used
+#    - gksu is used when manipulating the firewall port
+#
+# Usage:
+########
+#    filedrawer [options]
+#    (see variable 'usage' in function _usage below about available options!
+#
+#    Example:
+#       filedrawer --dir=$HOME/my-shared-files --port=8005
+#
+# Notes:
+########
+#    1) The http server initially stops all of its existing server instances.
+#    2) If 'ufw' firewall is enabled, then this http server opens ufw port $SRV_PORT,
+#       and after stopping the http server, the port is closed.
+#    3) Port 8000 (see $SRV_PORT initialization below) is used by default,
+#       if option --port is not given.
+#
+# Tips:
+#######
+#    - Please write this script to a file, e.g. /usr/local/bin/filedrawer
+#      (which I will use in the examples here).
+#
+#    - Set also ownership and permissions:
+#          sudo chown root:root /usr/local/bin/filedrawer
+#          sudo chmod 0755 /usr/local/bin/filedrawer
+#
+#    - You can verify (on the server) that this server is running (or not)
+#      e.g. with this command:
+#         ps -ef | grep http.server | grep -v yad | grep -v grep
+#
+#    - A client machine may use the server e.g. with a browser:
+#         firefox http://server-name-or-server-ip:portnr
+#      For example:
+#         firefox http://192.168.1.101:8000
+#
+# Written by: @manuel at Antergos.com
+# Date:       2018-01-27
+# Changes:    2018-01-30:
+#                 - managing only port $SRV_PORT of the firewall (thanks casquinhas!)
+#                 - added info about starting directory
+#                 - added option --dir=<starting-directory> (thanks Keegan!)
+#                 - added usage information (thanks casquinhas!)
+#                 - added option for port assignment
+#
+# $Id: filedrawer,v 1.15 2018/02/10 17:49:20 me Exp $
+
+export SRV_PORT=8000                                  # default port value
+export SRV_COMMAND="python -m http.server $SRV_PORT"  # this implements the server!
+export SRV_STATUS="[unknown]"
+
+SRV_NAME="filedrawer"
+
+_usage()
+{
+    local msg="$*"
+
+    local usage="Usage: $0 [--dir=start-dir | --port=number | -h | --help]"
+
+    local tmpfile=/tmp/tmpfile.$$
+    local factor=10
+    local w=$((${#usage} * factor))
+    local h=100
+    
+    if [ "$msg" != "" ] ; then
+        echo "$msg" > $tmpfile
+        ((h+=100))
+        if [ $((${#msg} * factor)) -gt $w ] ; then
+            w=$((${#msg} * factor))
+        fi
+    fi
+    echo "$usage" >> $tmpfile
+
+    #_message $w $h "$tmpfile"
+    cat "$tmpfile" | yad --text-info --title="Message" --width=$w --height=$h --button=gtk-quit:1
+    rm -f $tmpfile
+}
+
+Stop()
+{
+    local yadfield="$1"
+    SRV_STATUS=stopped
+    echo "$yadfield:$SRV_STATUS"       # output to yad field (Server status)
+    if [ $HAS_UFW -eq 1 ] ; then
+        gksu -w "ufw delete allow $SRV_PORT/tcp"
+    fi
+    pkill -fx "$SRV_COMMAND"
+}
+Start()
+{
+    local yadfield="$1"
+    SRV_STATUS=started
+    echo "$yadfield:$SRV_STATUS"       # output to yad field (Server status)
+    if [ $HAS_UFW -eq 1 ] ; then
+        gksu -w "ufw allow $SRV_PORT/tcp"
+    fi
+    $SRV_COMMAND >/dev/null &
+}
+Restart()
+{
+    local yadfield="$1"
+    Stop  "$yadfield"
+    Start "$yadfield"
+}
+
+export -f Stop Start Restart  # for yad!
+
+Constructor()
+{
+    # If Firewall (ufw) is on, prepare for disabling port $SRV_PORT while http server is running,
+    # and enabling it again when the http server stops.
+
+    export HAS_UFW=0
+    if [ "$(which ufw 2>/dev/null)" != "" ] ; then              # is ufw installed
+        if [[ "$(gksu -w "ufw status")" =~ "active" ]] ; then   # if ufw enabled
+           export HAS_UFW=1
+        fi
+    fi
+
+    # Handle user options:
+    local xx
+    local tmp
+
+    for xx in "$@"
+    do
+        case "$xx" in
+            --dir=*)               # use given starting directory
+                tmp="${xx:6}"
+                case "$tmp" in
+                    ~*) tmp="$HOME"${tmp:1} ;;
+                esac
+                cd "$tmp"
+                ;;
+            --port=*)
+                export SRV_PORT=${xx:7}
+                ;;
+            -h|--help)
+                _usage
+                exit 0
+                ;;
+            -*)
+                _usage "Error: option '$*' not supported."
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# trap "{ gksu -w 'ufw delete allow 8000/tcp' ; }" EXIT   # enable firewall at exit
+
+StartHere()
+{
+    Constructor "$@"
+
+    local address=$(uname -n):$SRV_PORT
+    # If 'uname -n' does not work in your system, use e.g. this:
+    # address=$(ip addr | grep "inet " | grep -v "127.0" | head -n 1 | awk '{print $2}' | sed 's|/24||'):$SRV_PORT
+
+    local yadfield=3  # field: Server status
+
+    Restart    # There may be old instances, stop them first.
+
+    yad --form \
+        --title="$SRV_NAME, a simple HTTP based file server" \
+        --width=400 \
+        --field="Server address":RO   "$address" \
+        --field="Directory root":RO   "$PWD" \
+        --field="Server status":RO    "$SRV_STATUS" \
+        --field="Start":fbtn          '@bash -c "Restart '$yadfield'"' \
+        --field="Stop":fbtn           '@bash -c "Stop '$yadfield'"' \
+        --button=gtk-quit:1
+
+    if [ "$SRV_STATUS" = "started" ] ; then
+        echo "tarvii pysäyttää"
+        Stop
+    else
+        echo "ei tarvi pysäyttää"
+    fi
+}
+
+StartHere "$@"
