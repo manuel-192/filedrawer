@@ -7,7 +7,7 @@ pkgrel=1
 url="https://github.com/manuel-192/$pkgname"
 arch=('any')
 license=('GPL3')
-depends=('bash' 'yad')
+depends=('bash' 'yad' 'ufw' 'gksu' 'python')  # python 3 required
 source=("$url/raw/master/$pkgname-$pkgver")
 sha512sums=('f7c1e9d9f5ac6ab487ca791b27cbb308ec956f44f29df6316422a6927b65ea2c62c6917905670b66907b44fa403f37bdbfc5dd34f4d3670260d75e78765156f7')
 
